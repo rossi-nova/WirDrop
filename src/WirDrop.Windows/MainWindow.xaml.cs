@@ -79,11 +79,25 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _service.AddLog($"操作失败：{ex.Message}");
+            _service.AddLog($"操作失败：{ex}");
         }
         finally
         {
             ToggleButton.IsEnabled = true;
+        }
+    }
+
+    private async void ScanButton_Click(object sender, RoutedEventArgs e)
+    {
+        ScanButton.IsEnabled = false;
+        try
+        {
+            var added = await _service.ScanLanAsync();
+            StatusText.Text = added > 0 ? $"扫描到 {added} 台设备" : "扫描完成：无设备";
+        }
+        finally
+        {
+            ScanButton.IsEnabled = true;
         }
     }
 

@@ -75,6 +75,8 @@
                           DisplayMemberPath="DisplayName" VerticalContentAlignment="Center"/>
                 <Button x:Name="ToggleButton" Style="{StaticResource ToolButton}" Content="启动"
                         Click="ToggleButton_Click"/>
+                <Button x:Name="ScanButton" Style="{StaticResource ToolButton}" Content="扫描局域网"
+                        Click="ScanButton_Click"/>
                 <Button x:Name="OpenFolderButton" Style="{StaticResource GhostButton}"
                         Content="打开下载目录" Click="OpenFolder_Click"/>
             </StackPanel>

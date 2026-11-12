@@ -297,4 +297,101 @@ public sealed class AirDropSender
             throw;
         }
     }
+
+    /// <summary>
+    /// 在局域网内主动搜索 AirDrop 接收端（DISC-5）。
+    ///
+    /// 不依赖 mDNS 组播：很多路由器不会把有线口的组播转发到 Wi-Fi，手机也就看不到我们。
+    /// 但发送方向通常是通的——所以直接对子网内每个地址的 8770 端口发 `/Discover`，
+    /// 只要对端是「所有人」模式就会应答。这是电脑主动找手机最可靠的路径。
+    /// </summary>
+    public async Task<IReadOnlyList<(IPAddress Address, DiscoverResponse Response)>> ScanSubnetAsync(
+        int port = 8770,
+        int concurrency = 64,
+        TimeSpan? perHostTimeout = null,
+        IProgress<int>? progress = null,
+        CancellationToken ct = default,
+        bool includeSelf = false)
+    {
+        var timeout = perHostTimeout ?? TimeSpan.FromMilliseconds(1500);
+        var hosts = EnumerateSubnetHosts(_iface.Address);
+        var found = new List<(IPAddress, DiscoverResponse)>();
+        var gate = new SemaphoreSlim(concurrency);
+        var done = 0;
+
+        var tasks = hosts.Select(async host =>
+        {
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                // 跳过自身是默认行为；includeSelf 仅用于测试"扫描能发现监听中的接收端"。
+                if (!includeSelf && host.Equals(_iface.Address))
+                {
+                    return;
+                }
+
+                using var hostCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                hostCts.CancelAfter(timeout);
+                var response = await DiscoverAsync(new IPEndPoint(host, port), hostCts.Token).ConfigureAwait(false);
+                if (response is not null)
+                {
+                    lock (found)
+                    {
+                        found.Add((host, response));
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                gate.Release();
+                progress?.Report(Interlocked.Increment(ref done));
+            }
+        });
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        return found.OrderBy(f => f.Item1, new IpComparer()).ToList();
+    }
+
+    private static IEnumerable<IPAddress> EnumerateSubnetHosts(IPAddress self)
+    {
+        if (self.AddressFamily != AddressFamily.InterNetwork)
+        {
+            yield break;
+        }
+
+        var bytes = self.GetAddressBytes();
+        // 默认按 /24 扫描：覆盖绝大多数家庭与小办公室局域网，256 个地址并发探测在数秒内完成。
+        for (var i = 1; i < 255; i++)
+        {
+            bytes[3] = (byte)i;
+            yield return new IPAddress(bytes);
+        }
+    }
+
+    private sealed class IpComparer : IComparer<IPAddress>
+    {
+        public int Compare(IPAddress? x, IPAddress? y)
+        {
+            if (x is null || y is null)
+            {
+                return 0;
+            }
+
+            var a = x.GetAddressBytes();
+            var b = y.GetAddressBytes();
+            for (var i = 0; i < 4; i++)
+            {
+                var d = a[i].CompareTo(b[i]);
+                if (d != 0)
+                {
+                    return d;
+                }
+            }
+
+            return 0;
+        }
+    }
 }

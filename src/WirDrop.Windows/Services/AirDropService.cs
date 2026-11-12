@@ -209,6 +209,50 @@ public sealed class AirDropService : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 主动扫描局域网内的 AirDrop 接收端（DISC-5）。
+    /// 不依赖 mDNS 组播，直接对子网内每个地址的 8770 端口发 /Discover，
+    /// 这是电脑主动找手机最可靠的路径——即使手机看不到本机的广播。
+    /// </summary>
+    public async Task<int> ScanLanAsync(CancellationToken ct = default)
+    {
+        if (_iface is null || _server is null)
+        {
+            AddLog("请先启动服务再扫描");
+            return 0;
+        }
+
+        AddLog($"正在扫描局域网（{_iface.Address} 所在 /24）……");
+        var sender = new AirDropSender(_iface, DeviceName, _server.ServiceId ?? "000000000000");
+        var found = await sender.ScanSubnetAsync(port: 8770, ct: ct).ConfigureAwait(false);
+        var added = 0;
+        foreach (var (address, response) in found)
+        {
+            var instance = new AirdropServiceInstance
+            {
+                InstanceName = $"{address}:{response.ReceiverComputerName}",
+                HostName = address.ToString(),
+                Address = address,
+                Port = 8770,
+                Flags = 0x89,
+            };
+            var existing = Peers.FirstOrDefault(p => p.Instance.Address.Equals(address));
+            if (existing is not null)
+            {
+                existing.Status = "可见（扫描）";
+                continue;
+            }
+
+            Peers.Add(new PeerViewModel { Instance = instance, Status = "可见（扫描）" });
+            AddLog($"扫描发现：{response.ReceiverComputerName} @ {address}");
+            added++;
+        }
+
+        AddLog(found.Count == 0 ? "扫描完成：局域网内没有处于「所有人」模式的 AirDrop 设备" : $"扫描完成：发现 {found.Count} 台设备");
+        PeerCountChanged?.Invoke(this, Peers.Count);
+        return added;
+    }
+
     public async Task<SendResult> SendAsync(PeerViewModel peer, IReadOnlyList<string> paths, bool link = false)
     {
         if (_server is null || _iface is null)
