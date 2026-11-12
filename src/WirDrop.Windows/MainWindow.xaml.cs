@@ -2,6 +2,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 using WirDrop.Core.AirDrop;
 using WirDrop.Core.Net;
 using WirDrop.Windows.Services;
@@ -20,29 +21,35 @@ public partial class MainWindow : Window
         DataContext = _service;
         InterfaceCombo.ItemsSource = _service.Interfaces();
         InterfaceCombo.SelectedIndex = 0;
-        Loaded += OnLoaded;
+        // 直接启动：避免依赖 Loaded 的时序问题。
+        Dispatcher.BeginInvoke(new Action(() => _ = StartServiceAsync()), DispatcherPriority.Loaded);
         Closing += OnClosing;
         _service.AskRequested += OnAskRequested;
         _service.SendProgress += OnSendProgress;
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+
+    private async Task StartServiceAsync()
     {
         try
         {
-            await _service.StartAsync(InterfaceCombo.SelectedItem as NetworkInterfaceInfo);
-            SetRunning(true);
+            var preferred = InterfaceCombo.SelectedItem as NetworkInterfaceInfo;
+            await _service.StartAsync(preferred);
+            Dispatcher.Invoke(() => SetRunning(true));
         }
         catch (Exception ex)
         {
-            _service.AddLog($"启动失败：{ex.Message}");
-            SetRunning(false);
+            Dispatcher.Invoke(() =>
+            {
+                _service.AddLog("启动失败: " + ex);
+                SetRunning(false);
+            });
         }
     }
 
     private void SetRunning(bool running)
     {
-        StatusText.Text = running ? $"已开启 · 端口 {(_service.Interface is null ? "-" : "8771")}" : "未启动";
+        StatusText.Text = running ? $"已开启 · {_service.Interface?.Address} · 端口 {_service.Port}" : "未启动";
         ToggleButton.Content = running ? "停止" : "启动";
     }
 

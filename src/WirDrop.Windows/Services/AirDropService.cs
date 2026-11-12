@@ -83,6 +83,9 @@ public sealed class AirDropService : IAsyncDisposable
 
     public NetworkInterfaceInfo? Interface => _iface;
 
+    /// <summary>正在监听的端口（启动后有效）。</summary>
+    public int Port { get; private set; }
+
     public bool IsRunning => _server is not null;
 
     public IReadOnlyList<NetworkInterfaceInfo> Interfaces() => NetworkInterfaceInfo.Enumerate();
@@ -116,10 +119,15 @@ public sealed class AirDropService : IAsyncDisposable
         }
     }
 
+    private static void TraceStep(string m) => File.AppendAllText(Path.Combine(Path.GetTempPath(), "wirdrop-startup.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " " + m + Environment.NewLine);
+
     public async Task StartAsync(NetworkInterfaceInfo? preferred = null, int port = AirDropServer.DefaultPort)
     {
+        TraceStep("begin");
         await StopAsync();
+        TraceStep("stopped old");
         Directory.CreateDirectory(DownloadDirectory);
+        TraceStep("dir ok");
         _iface = preferred ?? NetworkInterfaceInfo.Enumerate().FirstOrDefault();
         if (_iface is null)
         {
@@ -140,6 +148,8 @@ public sealed class AirDropService : IAsyncDisposable
                 : $"来自「{e.SenderName}」的传输失败");
         };
         server.Start();
+        TraceStep("server started " + server.ActualPort);
+        Port = server.ActualPort;
         _server = server;
 
         var browser = new MdnsBrowser(_iface);
@@ -151,7 +161,9 @@ public sealed class AirDropService : IAsyncDisposable
         };
         browser.InstanceLost += (_, name) =>
             Application.Current.Dispatcher.BeginInvoke(() => RemovePeer(name));
-        await browser.StartAsync(server.LocalInstance);
+        TraceStep("mdns start begin");
+        try { await browser.StartAsync(server.LocalInstance); } catch (Exception ex) { TraceStep("mdns EX " + ex); throw; }
+        TraceStep("mdns started");
         _browser = browser;
 
         AddLog($"服务已启动：{DeviceName} · {_iface.DisplayName} · 端口 {server.ActualPort}");

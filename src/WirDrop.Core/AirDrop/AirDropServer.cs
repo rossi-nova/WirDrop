@@ -214,6 +214,11 @@ public sealed class AirDropServer : IAsyncDisposable
         {
             Diagnostic?.Invoke(this, $"连接 {remote} 结束：{ex}");
         }
+        catch (Exception ex)
+        {
+            // 兜底：任何协议或解包异常都不能让进程静默吞掉，必须记录并结束该连接。
+            Diagnostic?.Invoke(this, $"连接 {remote} 异常：{ex}");
+        }
     }
 
     private async Task ServeConnectionAsync(Stream stream, IPEndPoint remote, CancellationToken ct)

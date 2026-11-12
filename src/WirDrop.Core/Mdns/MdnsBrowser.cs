@@ -187,7 +187,10 @@ public sealed class MdnsBrowser : IAsyncDisposable
                 .FirstOrDefault(a => a is not null)
                 ?? existing?.Address
                 ?? remote.Address;
-            if (instanceName.Equals(_local?.InstanceName, StringComparison.OrdinalIgnoreCase))
+            // 按服务 ID 过滤自己的回环：实例名可能带不同后缀（.local 与 .local.）。
+            var ownServiceId = _local?.ServiceId;
+            var remoteId = instanceName.Split('.')[0];
+            if (ownServiceId is not null && remoteId.Equals(ownServiceId, StringComparison.OrdinalIgnoreCase))
             {
                 continue; // 自己的回环
             }
@@ -291,11 +294,14 @@ public sealed class MdnsBrowser : IAsyncDisposable
 
         try
         {
-            var instance = _local.InstanceName.EndsWith('.') ? _local.InstanceName : _local.InstanceName + ".";
-            if (!instance.EndsWith(".local.", StringComparison.OrdinalIgnoreCase))
+            // InstanceName 形如 "<id>._airdrop._tcp.local."：去掉结尾点后补齐 ".local."，避免重复拼接后缀。
+            var instance = _local.InstanceName.TrimEnd('.');
+            if (!instance.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
             {
-                instance += "local.";
+                instance += ".local";
             }
+
+            instance += ".";
 
             var host = _local.HostName.EndsWith('.') ? _local.HostName : _local.HostName + ".local.";
             var answers = new List<DnsRecord>
@@ -336,10 +342,32 @@ public sealed class MdnsBrowser : IAsyncDisposable
         }
     }
 
+    private bool _disposed;
+
     public async ValueTask DisposeAsync()
     {
-        await _cts.CancelAsync().ConfigureAwait(false);
-        _client?.Close();
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        try
+        {
+            await _cts.CancelAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        try
+        {
+            _client?.Close();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
         if (_loop is not null)
         {
             try
