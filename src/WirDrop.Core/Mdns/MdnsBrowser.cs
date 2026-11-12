@@ -155,13 +155,14 @@ public sealed class MdnsBrowser : IAsyncDisposable
         }
 
         var now = DateTimeOffset.UtcNow;
-        // 1) 别人的查询：只要问的是 _airdrop._tcp，回答本机记录。
+        // 1) 别人的查询：按问到的名字/类型分别应答。
+        //    Apple 的解析顺序是 PTR → SRV → A/AAAA，每一步都会单独发查询，
+        //    因此这三类都必须应答，否则 iPhone 只能看到名字、拿不到地址。
         if (!message.IsResponse)
         {
-            if (_local is not null
-                && message.Questions.Any(q => DnsCodec.NameEquals(q.Name, ServiceType) && (q.Type is DnsRecordType.Ptr or DnsRecordType.Any)))
+            if (_local is not null && message.Questions.Count > 0)
             {
-                RespondWithLocal();
+                RespondToQuestions(message.Questions);
             }
 
             return;
@@ -292,40 +293,101 @@ public sealed class MdnsBrowser : IAsyncDisposable
             return;
         }
 
+        SendRecords(client, LocalAnswers());
+    }
+
+    /// <summary>本机应公告的全部记录。</summary>
+    private List<DnsRecord> LocalAnswers()
+    {
+        var local = _local!;
+        var instance = InstanceNameOf(local);
+        var host = HostNameOf(local);
+        var answers = new List<DnsRecord>
+        {
+            DnsRecord.Ptr(ServiceType, instance, 4500),
+            DnsRecord.Srv(instance, local.Port, host, 120),
+            DnsRecord.Txt(instance, $"flags={local.Flags}"),
+        };
+        if (local.Address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            answers.Add(DnsRecord.A(host, local.Address));
+        }
+        else
+        {
+            answers.Add(DnsRecord.Aaaa(host, local.Address));
+        }
+
+        return answers;
+    }
+
+    private static string InstanceNameOf(AirdropServiceInstance local)
+    {
+        var instance = local.InstanceName.TrimEnd('.');
+        if (!instance.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+        {
+            instance += ".local";
+        }
+
+        return instance + ".";
+    }
+
+    private string HostNameOf(AirdropServiceInstance local)
+    {
+        var host = local.HostName.TrimEnd('.');
+        if (!host.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+        {
+            host += ".local";
+        }
+
+        return host + ".";
+    }
+
+    /// <summary>
+    /// 按问题精确应答：PTR 查服务类型、SRV/TXT 查实例名、A/AAAA 查主机名。
+    /// 一条查询里问了多个时，合并成一包应答。
+    /// </summary>
+    private void RespondToQuestions(IReadOnlyList<DnsQuestion> questions)
+    {
+        var client = _client;
+        if (client is null || _local is null)
+        {
+            return;
+        }
+
+        var local = _local;
+        var instance = InstanceNameOf(local);
+        var host = HostNameOf(local);
+        var archive = LocalAnswers();
+        var picks = new List<DnsRecord>();
+        foreach (var q in questions)
+        {
+            var wanted = q.Type == DnsRecordType.Any
+                ? archive
+                : archive.Where(r => r.Type == q.Type).ToList();
+            picks.AddRange(wanted.Where(r => DnsCodec.NameEquals(r.Name, q.Name)));
+        }
+
+        if (picks.Count == 0)
+        {
+            return;
+        }
+
+        // 去重后合并成一条应答，符合 mDNS 的已知答案抑制习惯。
+        var distinct = picks.DistinctBy(r => (r.Name, r.Type, r.Ttl, r.Data.Length)).ToList();
+        SendRecords(client, distinct);
+    }
+
+    private void SendRecords(UdpClient client, List<DnsRecord> records)
+    {
         try
         {
-            // InstanceName 形如 "<id>._airdrop._tcp.local."：去掉结尾点后补齐 ".local."，避免重复拼接后缀。
-            var instance = _local.InstanceName.TrimEnd('.');
-            if (!instance.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
-            {
-                instance += ".local";
-            }
-
-            instance += ".";
-
-            var host = _local.HostName.EndsWith('.') ? _local.HostName : _local.HostName + ".local.";
-            var answers = new List<DnsRecord>
-            {
-                DnsRecord.Ptr(ServiceType, instance, 4500),
-                DnsRecord.Srv(instance, _local.Port, host, 120),
-                DnsRecord.Txt(instance, $"flags={_local.Flags}"),
-            };
-            if (_local.Address.AddressFamily == AddressFamily.InterNetwork)
-            {
-                answers.Add(DnsRecord.A(host, _local.Address));
-            }
-            else
-            {
-                answers.Add(DnsRecord.Aaaa(host, _local.Address));
-            }
-
-            var message = new DnsMessage(0, true, [], answers, [], []);
+            var message = new DnsMessage(0, true, [], records, [], []);
             var bytes = DnsCodec.Encode(message);
             client.Send(bytes, bytes.Length, new IPEndPoint(MulticastGroup, Port));
         }
         catch (Exception ex) when (ex is SocketException or FormatException)
         {
-            Diagnostic?.Invoke(this, $"mDNS 公告失败：{ex.Message}");
+            Diagnostic?.Invoke(this, $"mDNS 应答失败：{ex.Message}");
         }
     }
 
