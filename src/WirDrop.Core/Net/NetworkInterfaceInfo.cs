@@ -23,6 +23,15 @@ public sealed class NetworkInterfaceInfo
 
     public InterfaceKind Kind { get; init; } = InterfaceKind.Ip;
 
+    /// <summary>系统报告的真实链路类型</summary>
+    public NetworkInterfaceType LinkType { get; init; } = NetworkInterfaceType.Unknown;
+
+    /// <summary>是否无线链路（Wi-Fi）。AirDrop 在无线链路上体验最好，优先选择。</summary>
+    public bool IsWireless => LinkType is NetworkInterfaceType.Wireless80211
+        || Name.Contains("Wi-Fi", StringComparison.OrdinalIgnoreCase)
+        || Name.Contains("WLAN", StringComparison.OrdinalIgnoreCase)
+        || Name.Contains("无线", StringComparison.Ordinal);
+
     public required int Index { get; init; }
 
     /// <summary>选中的单播地址，用作 TLS 客户端源地址与 mDNS 组播落点。</summary>
@@ -79,28 +88,35 @@ public sealed class NetworkInterfaceInfo
                 Id = nic.Id,
                 Name = nic.Name,
                 Index = index,
+                LinkType = nic.NetworkInterfaceType,
                 Address = chosen,
                 Addresses = usable,
             });
         }
 
-        // Wi-Fi 优先（AirDrop 在无线链路上体验最好），再按 IPv6 链路本地优先。
-        return result
-            .OrderByDescending(i => i.Name.Contains("Wi-Fi", StringComparison.OrdinalIgnoreCase)
-                                    || i.Name.Contains("WLAN", StringComparison.OrdinalIgnoreCase)
-                                    || i.Name.Contains("无线", StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(i => i.Address.AddressFamily == AddressFamily.InterNetwork)
-            .ThenByDescending(i => !i.Name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
-                                 && !i.Name.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
-                                 && !i.Name.Contains("VMware", StringComparison.OrdinalIgnoreCase)
-                                 && !i.Name.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        return SortByPreference(result);
     }
 
     /// <summary>
-    /// 优先选可路由到局域网的 IPv4 全局地址：AirDrop 的 mDNS 走 IPv4 组播 224.0.0.251，
-    /// 链路本地 IPv6（fe80::）到不了对端。没有 IPv4 时退回 IPv6。
+    /// 排序规则（AirDrop 照此挑选默认接口）：
+    /// 1) 无线优先（Wi-Fi 上体验最好，设备更多）；
+    /// 2) 其次 IPv4（mDNS 走 IPv4 组播，链路本地 IPv6 到不了对端）；
+    /// 3) 最后排除虚拟网卡（Hyper-V / VMware / VirtualBox）。
+    /// 有线以太网在此规则下依然会被选中，只要它是唯一或最好的接口。
     /// </summary>
+    public static List<NetworkInterfaceInfo> SortByPreference(IEnumerable<NetworkInterfaceInfo> interfaces) =>
+        interfaces
+            .OrderByDescending(i => i.IsWireless)
+            .ThenByDescending(i => i.Address.AddressFamily == AddressFamily.InterNetwork)
+            .ThenByDescending(i => !IsVirtual(i.Name))
+            .ToList();
+
+    private static bool IsVirtual(string name) =>
+        name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("VMware", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase);
+
     private static IPAddress SelectPreferred(IReadOnlyList<IPAddress> usable) =>
         usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && IsPrivate(a))
         ?? usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
