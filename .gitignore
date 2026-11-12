@@ -6,3 +6,6 @@ TestResults/
 artifacts/
 scratch/
 tools/
+tools/owly/target/
+tools/*/bin/
+tools/*/obj/
