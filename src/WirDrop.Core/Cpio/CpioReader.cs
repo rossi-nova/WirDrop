@@ -398,10 +398,10 @@ public sealed class OdcWriter
     private uint _nextInode = 1;
 
     public static byte[] RootHeader(long mtime, uint inode = 1) =>
-        Header(".", 0x41ED, 0, mtime, inode, 2);
+        Header(".", 16877, 0, mtime, inode, 2);
 
     public static byte[] DirectoryHeader(string name, long mtime, uint inode) =>
-        Header(name, 0x41ED, 0, mtime, inode, 2);
+        Header(name, 16877, 0, mtime, inode, 2);
 
     /// <summary>普通文件 0644 的条目头，数据紧跟在头之后、不做对齐（odc 无需填充）。</summary>
     public byte[] FileHeader(string name, long size, long mtime)
@@ -411,7 +411,7 @@ public sealed class OdcWriter
             throw new InvalidOperationException("文件超过 odc 单个条目上限");
         }
 
-        return Header(name, 0x81A4, size, mtime, _nextInode++, 1);
+        return Header(name, 33188, size, mtime, _nextInode++, 1);
     }
 
     public static byte[] TrailerHeader() => Header(CpioReader.TrailerName, 0, 0, 0, 0, 0);
@@ -422,14 +422,14 @@ public sealed class OdcWriter
         var header = string.Concat(
             "070707",
             "000000", // dev
-            (inode & 0x3FFFFF).ToString("D6"),
+            Convert.ToString(inode & 0x3FFFFF, 8).PadLeft(6, '0'),
             Convert.ToString(mode, 8).PadLeft(6, '0'),
             "000000", // uid
             "000000", // gid
-            nlink.ToString("D6"),
+            Convert.ToString(nlink, 8).PadLeft(6, '0'),
             "000000", // rdev
             Convert.ToString(mtime & 0x1FFFFFFF, 8).PadLeft(11, '0'),
-            (nameBytes.Length + 1).ToString("D6"),
+            Convert.ToString(nameBytes.Length + 1, 8).PadLeft(6, (char)48),
             Convert.ToString(size, 8).PadLeft(11, '0'));
         var result = new byte[header.Length + nameBytes.Length + 1];
         Encoding.ASCII.GetBytes(header).CopyTo(result, 0);

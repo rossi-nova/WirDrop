@@ -375,3 +375,272 @@ public static class HttpFraming
         _ => "Unknown",
     };
 }
+
+/// <summary>异步分帧：服务端用它按需读取与写入，避免大文件整包入内存。</summary>
+public static class AsyncFraming
+{
+    /// <summary>读取请求头；连接在头前关闭返回 null。</summary>
+    public static async Task<HttpRequestHead?> ReadRequestHeadAsync(Stream stream, CancellationToken ct = default)
+    {
+        var buffer = new MemoryStream();
+        var one = new byte[1];
+        var state = 0;
+        while (true)
+        {
+            var n = await stream.ReadAsync(one, ct).ConfigureAwait(false);
+            if (n == 0)
+            {
+                return buffer.Length == 0 ? null : throw new HttpFramingException("HTTP 头部不完整", 400);
+            }
+
+            buffer.WriteByte(one[0]);
+            if (buffer.Length > 16 * 1024)
+            {
+                throw new HttpFramingException("HTTP 头部过大", 431);
+            }
+
+            state = one[0] switch
+            {
+                (byte)'\r' when state is 0 or 2 => state + 1,
+                (byte)'\n' when state is 1 or 3 => state + 1,
+                _ => 0,
+            };
+            if (state == 4)
+            {
+                return HttpFraming.ParseRequestHead(buffer.ToArray());
+            }
+        }
+    }
+
+    /// <summary>把请求体完整读入内存（受上限约束）。</summary>
+    public static async Task<byte[]> ReadBodyAsync(Stream stream, HttpRequestHead head, CancellationToken ct = default)
+    {
+        using var ms = new MemoryStream();
+        await CopyBodyAsync(stream, head, ms, ct).ConfigureAwait(false);
+        return ms.ToArray();
+    }
+
+    /// <summary>把请求体流式拷到目标流；chunked 逐块转发，Content-Length 按长度读。</summary>
+    public static async Task CopyBodyAsync(Stream source, HttpRequestHead head, Stream destination, CancellationToken ct = default)
+    {
+        switch (head.BodyKind)
+        {
+            case BodyKind.None:
+                return;
+
+            case BodyKind.ContentLength:
+            {
+                var left = head.ContentLength;
+                var buffer = new byte[64 * 1024];
+                while (left > 0)
+                {
+                    var n = await source.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, left)), ct).ConfigureAwait(false);
+                    if (n == 0)
+                    {
+                        throw new HttpFramingException("请求体提前结束", 400);
+                    }
+
+                    await destination.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+                    left -= n;
+                }
+
+                return;
+            }
+
+            case BodyKind.Chunked:
+            {
+                var buffer = new byte[64 * 1024];
+                while (true)
+                {
+                    var line = await ReadLineAsync(source, 1024, ct).ConfigureAwait(false);
+                    var semi = line.IndexOf(';');
+                    var sizeText = (semi >= 0 ? line[..semi] : line).Trim();
+                    if (sizeText.Length is 0 or > 16 || !sizeText.All(char.IsAsciiHexDigit))
+                    {
+                        throw new HttpFramingException("chunk 长度非法", 400);
+                    }
+
+                    var size = long.Parse(sizeText, System.Globalization.NumberStyles.HexNumber);
+                    if (size == 0)
+                    {
+                        while ((await ReadLineAsync(source, 16 * 1024, ct).ConfigureAwait(false)).Length > 0)
+                        {
+                        }
+
+                        return;
+                    }
+
+                    var left = size;
+                    while (left > 0)
+                    {
+                        var n = await source.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, left)), ct).ConfigureAwait(false);
+                        if (n == 0)
+                        {
+                            throw new HttpFramingException("chunk 数据截断", 400);
+                        }
+
+                        await destination.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+                        left -= n;
+                    }
+
+                    var crlf = new byte[2];
+                    await source.ReadExactlyAsync(crlf, ct).ConfigureAwait(false);
+                    if (crlf[0] != '\r' || crlf[1] != '\n')
+                    {
+                        throw new HttpFramingException("chunk 后缺少 CRLF", 400);
+                    }
+                }
+            }
+
+            default:
+                throw new HttpFramingException("未知的请求体类型", 400);
+        }
+    }
+
+    private static async Task<string> ReadLineAsync(Stream stream, int maxLength, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        var one = new byte[1];
+        var prev = 0;
+        while (true)
+        {
+            var n = await stream.ReadAsync(one, ct).ConfigureAwait(false);
+            if (n == 0)
+            {
+                throw new HttpFramingException("块行提前结束", 400);
+            }
+
+            if (prev == '\r' && one[0] == '\n')
+            {
+                sb.Length--;
+                return sb.ToString();
+            }
+
+            if (sb.Length >= maxLength)
+            {
+                throw new HttpFramingException("块行过长", 400);
+            }
+
+            sb.Append((char)one[0]);
+            prev = one[0];
+        }
+    }
+
+    /// <summary>写出带 Content-Length 的响应。</summary>
+    public static async Task WriteResponseAsync(Stream stream, int status, byte[] body, CancellationToken ct, params (string Name, string Value)[] headers)
+    {
+        var sb = new StringBuilder();
+        sb.Append("HTTP/1.1 ").Append(status).Append(' ').Append(HttpFraming.ReasonPhrase(status)).Append("\r\n");
+        foreach (var (name, value) in headers)
+        {
+            sb.Append(name).Append(": ").Append(value).Append("\r\n");
+        }
+
+        sb.Append("Content-Length: ").Append(body.Length).Append("\r\n\r\n");
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(sb.ToString()), ct).ConfigureAwait(false);
+        if (body.Length > 0)
+        {
+            await stream.WriteAsync(body, ct).ConfigureAwait(false);
+        }
+
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+    }
+}
+
+/// <summary>HTTP 响应头（客户端解析对端应答用）。</summary>
+public sealed class HttpResponseHead
+{
+    public required int StatusCode { get; init; }
+
+    public required IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; }
+
+    public long ContentLength { get; init; }
+}
+
+public static class HttpResponseParser
+{
+    /// <summary>读取一个响应头；连接关闭返回 null。</summary>
+    public static async Task<HttpResponseHead?> ReadAsync(Stream stream, CancellationToken ct = default)
+    {
+        var buffer = new MemoryStream();
+        var one = new byte[1];
+        var state = 0;
+        while (true)
+        {
+            var n = await stream.ReadAsync(one, ct).ConfigureAwait(false);
+            if (n == 0)
+            {
+                return buffer.Length == 0 ? null : throw new HttpFramingException("HTTP 响应不完整", 400);
+            }
+
+            buffer.WriteByte(one[0]);
+            if (buffer.Length > 16 * 1024)
+            {
+                throw new HttpFramingException("HTTP 响应头过大", 431);
+            }
+
+            state = one[0] switch
+            {
+                (byte)'\r' when state is 0 or 2 => state + 1,
+                (byte)'\n' when state is 1 or 3 => state + 1,
+                _ => 0,
+            };
+            if (state == 4)
+            {
+                break;
+            }
+        }
+
+        var text = Encoding.ASCII.GetString(buffer.ToArray());
+        text = text.EndsWith("\r\n\r\n", StringComparison.Ordinal) ? text[..^4] : text;
+        var lines = text.Split("\r\n");
+        var parts = lines[0].Split(' ');
+        if (parts.Length < 2 || !parts[0].StartsWith("HTTP/1.", StringComparison.Ordinal)
+            || !int.TryParse(parts[1], out var status))
+        {
+            throw new HttpFramingException("响应行非法", 400);
+        }
+
+        var headers = new List<KeyValuePair<string, string>>();
+        foreach (var line in lines.Skip(1))
+        {
+            var colon = line.IndexOf(':');
+            if (colon <= 0)
+            {
+                continue;
+            }
+
+            headers.Add(new(line[..colon].Trim(), line[(colon + 1)..].Trim()));
+        }
+
+        var length = headers
+            .Where(h => h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+            .Select(h => long.TryParse(h.Value, out var v) ? v : -1)
+            .FirstOrDefault(-1);
+        return new HttpResponseHead { StatusCode = status, Headers = headers, ContentLength = Math.Max(0, length) };
+    }
+
+    /// <summary>读取 Content-Length 指定的响应体（无长度视为空）。</summary>
+    public static async Task<byte[]> ReadBodyAsync(Stream stream, HttpResponseHead head, CancellationToken ct = default)
+    {
+        if (head.ContentLength == 0)
+        {
+            return [];
+        }
+
+        var buffer = new byte[head.ContentLength];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var n = await stream.ReadAsync(buffer.AsMemory(read), ct).ConfigureAwait(false);
+            if (n == 0)
+            {
+                break;
+            }
+
+            read += n;
+        }
+
+        return read == buffer.Length ? buffer : buffer[..read];
+    }
+}
