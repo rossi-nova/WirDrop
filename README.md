@@ -46,6 +46,19 @@ dotnet run --project src/WirDrop.Windows
 dotnet publish src/WirDrop.Windows -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
 ```
 
+## 验证现状
+
+| 层面 | 结果 |
+|---|---|
+| 二进制 plist | 14 项单元测试 |
+| CPIO odc/newc | OpenDrop/Owly 字节级向量逐字段比对 |
+| DVZip | 5 条向量解压后 SHA-256 一致，自编码往返一致 |
+| **Apple 线报文** | 10 项：Discover/Ask/Upload 的完整请求字节原样喂入，解析结果与 Apple 行为描述逐字段相符 |
+| 线协议边界 | 8 项：单连接三阶段、Expect 100-continue、未列出条目、路径穿越、重名、legacy /Ask |
+| 本机端到端 | 8 MB 真实 LAN 地址传输 41.4 MB/s，SHA-256 一致 |
+
+共 38 项自动化测试。真机（iPhone/iPad/Mac）互操作需要实际设备参与，尚未在此环境实拍。
+
 ## 已知限制
 
 - 「联系人」模式依赖 Apple 发放给 Apple ID 的身份记录，非 Apple 设备无法获得，因此
