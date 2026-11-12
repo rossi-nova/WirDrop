@@ -82,6 +82,9 @@ public sealed class AirDropServer : IAsyncDisposable
 
     public Visibility Visibility { get; set; } = Visibility.Everyone;
 
+    /// <summary>无人值守时是否自动接受 /Ask（默认拒绝；界面会订阅 <see cref="AskReceived"/>）。</summary>
+    public bool AutoAccept { get; set; }
+
     public ReceiverFlags Flags { get; set; } = ReceiverFlags.Minimal;
 
     public X509Certificate2 Certificate => _certificate ?? throw new InvalidOperationException("服务端尚未启动");
@@ -199,8 +202,25 @@ public sealed class AirDropServer : IAsyncDisposable
             {
                 client.NoDelay = true;
                 var stream = client.GetStream();
-                await using var tls = await AirDropTls.AcceptAsync(stream, _certificate!, timeout.Token).ConfigureAwait(false);
-                await ServeConnectionAsync(tls, remote, timeout.Token).ConfigureAwait(false);
+                using var tls = await AirDropTls.AcceptAsync(stream, _certificate!, timeout.Token).ConfigureAwait(false);
+                try
+                {
+                    await ServeConnectionAsync(tls, remote, timeout.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    // 先发 close_notify 再关闭底层 socket，避免最后一段响应被 RST 丢掉。
+                    try
+                    {
+                        await tls.ShutdownAsync().ConfigureAwait(false);
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (System.Security.Authentication.AuthenticationException)
+                    {
+                    }
+                }
             }
             finally
             {
@@ -272,6 +292,15 @@ public sealed class AirDropServer : IAsyncDisposable
                     {
                         var body = await AsyncFraming.ReadBodyAsync(stream, head, ct).ConfigureAwait(false);
                         var ask = AskRequest.Parse(body);
+                        // ASK-5：FileBomPath 必须在收到时就校验，早于弹窗与上传。
+                        try { _ = new Archive.UploadExtractor(ask); }
+                        catch (Archive.UploadException ex)
+                        {
+                            Diagnostic?.Invoke(this, $"/Ask 校验失败：{ex.Message}");
+                            await AsyncFraming.WriteResponseAsync(stream, 400, [], ct).ConfigureAwait(false);
+                            return;
+                        }
+
                         discoverUsed = true;
                         var decision = await PromptAsync(ask, remote, ct).ConfigureAwait(false);
                         if (!decision)
@@ -378,7 +407,8 @@ public sealed class AirDropServer : IAsyncDisposable
         var handler = AskReceived;
         if (handler is null)
         {
-            return false;
+            // 没有界面订阅时按策略决定，便于无界面场景（测试/自动化）也能收文件。
+            return AutoAccept;
         }
 
         var incoming = new IncomingAsk { Request = ask, Remote = remote };

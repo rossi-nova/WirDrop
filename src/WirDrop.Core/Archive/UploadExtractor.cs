@@ -49,7 +49,17 @@ public sealed class UploadExtractor
         foreach (var file in ask.Files)
         {
             // ASK-5：FileBomPath 必须是 ./<FileName> 或 ./<folder>/<FileName>。
-            var path = SafeRelativePath.Parse(file.FileBomPath);
+            SafeRelativePath parsed;
+            try
+            {
+                parsed = SafeRelativePath.Parse(file.FileBomPath);
+            }
+            catch (UnsafePathException)
+            {
+                throw new UploadException($"文件路径不安全：{file.FileBomPath}");
+            }
+
+            var path = parsed;
             if (!string.Equals(path.Name.Trim(), file.FileName.Trim(), StringComparison.Ordinal))
             {
                 throw new UploadException($"文件路径与文件名不一致：{file.FileName}");
