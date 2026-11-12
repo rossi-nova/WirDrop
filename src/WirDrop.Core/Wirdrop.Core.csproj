@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WirDrop.Core</RootNamespace>
+    <AssemblyName>WirDrop.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\*.wav" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.15" />
+  </ItemGroup>
+
+</Project>

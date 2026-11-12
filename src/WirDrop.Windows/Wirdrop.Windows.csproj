@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>WirDrop.Windows</RootNamespace>
+    <AssemblyName>WirDrop</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources\wirdrop.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Company>WirDrop</Company>
+    <Product>WirDrop</Product>
+    <Description>Windows AirDrop 兼容客户端：与局域网内的 iPhone、iPad、Mac 互传文件</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WirDrop.Core\WirDrop.Core.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
+  </ItemGroup>
+
+</Project>

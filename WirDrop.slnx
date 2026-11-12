@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WirDrop.Core/WirDrop.Core.csproj" />
+    <Project Path="src/WirDrop.Tests/WirDrop.Tests.csproj" />
+    <Project Path="src/WirDrop.Windows/WirDrop.Windows.csproj" />
+  </Folder>
+</Solution>
