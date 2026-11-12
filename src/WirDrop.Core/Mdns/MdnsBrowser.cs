@@ -82,19 +82,44 @@ public sealed class MdnsBrowser : IAsyncDisposable
     public async Task StartAsync(AirdropServiceInstance? local, CancellationToken ct = default)
     {
         _local = local;
-        var endpoint = new IPEndPoint(IPAddress.Any, Port);
         var client = new UdpClient(AddressFamily.InterNetwork);
         client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        // 5353 常被 Windows 的 mDNS 缓存服务或其他 AirDrop 实现占用；
+        // SO_REUSEADDR + 0.0.0.0 是 mDNS 允许与它们共享端口的唯一方式。
         client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 255);
         client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, true);
+        var bound = false;
         try
         {
-            client.Client.Bind(new IPEndPoint(_iface.Address.AddressFamily == AddressFamily.InterNetwork ? _iface.Address : IPAddress.Any, Port));
+            client.Client.Bind(new IPEndPoint(IPAddress.Any, Port));
+            bound = true;
         }
-        catch (SocketException)
+        catch (SocketException ex)
         {
+            Diagnostic?.Invoke(this, $"绑定 5353 失败：{ex.Message}");
+        }
+
+        if (!bound)
+        {
+            try
+            {
+                client.Client.Bind(new IPEndPoint(
+                    _iface.Address.AddressFamily == AddressFamily.InterNetwork ? _iface.Address : IPAddress.Any,
+                    Port));
+                bound = true;
+            }
+            catch (SocketException ex)
+            {
+                Diagnostic?.Invoke(this, $"绑定 {_iface.Address}:5353 失败：{ex.Message}");
+            }
+        }
+
+        if (!bound)
+        {
+            // 最后手段：随机端口。只能主动查询，收不到对端的组播查询。
             client.Close();
             client = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
+            Diagnostic?.Invoke(this, "mDNS 无法绑定 5353，已降级为仅主动查询模式（对端将看不到本机）");
         }
 
         try

@@ -35,7 +35,15 @@ public partial class MainWindow : Window
         {
             var preferred = InterfaceCombo.SelectedItem as NetworkInterfaceInfo;
             await _service.StartAsync(preferred);
-            Dispatcher.Invoke(() => SetRunning(true));
+            var warning = FirewallHelper.EnsureInboundRule();
+            Dispatcher.Invoke(() =>
+            {
+                SetRunning(true);
+                if (warning is not null)
+                {
+                    _service.AddLog(warning);
+                }
+            });
         }
         catch (Exception ex)
         {
