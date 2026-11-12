@@ -89,15 +89,33 @@ public sealed class NetworkInterfaceInfo
             .OrderByDescending(i => i.Name.Contains("Wi-Fi", StringComparison.OrdinalIgnoreCase)
                                     || i.Name.Contains("WLAN", StringComparison.OrdinalIgnoreCase)
                                     || i.Name.Contains("无线", StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(i => i.Address.AddressFamily == AddressFamily.InterNetworkV6 && i.Address.IsIPv6LinkLocal)
-            .ThenByDescending(i => i.Address.AddressFamily == AddressFamily.InterNetworkV6)
+            .ThenByDescending(i => i.Address.AddressFamily == AddressFamily.InterNetwork)
+            .ThenByDescending(i => !i.Name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
+                                 && !i.Name.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
+                                 && !i.Name.Contains("VMware", StringComparison.OrdinalIgnoreCase)
+                                 && !i.Name.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase))
             .ToList();
     }
 
+    /// <summary>
+    /// 优先选可路由到局域网的 IPv4 全局地址：AirDrop 的 mDNS 走 IPv4 组播 224.0.0.251，
+    /// 链路本地 IPv6（fe80::）到不了对端。没有 IPv4 时退回 IPv6。
+    /// </summary>
     private static IPAddress SelectPreferred(IReadOnlyList<IPAddress> usable) =>
-        usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetworkV6 && a.IsIPv6LinkLocal)
+        usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && IsPrivate(a))
+        ?? usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+        ?? usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetworkV6 && !a.IsIPv6LinkLocal)
         ?? usable.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetworkV6)
         ?? usable[0];
+
+    private static bool IsPrivate(IPAddress a)
+    {
+        var b = a.GetAddressBytes();
+        return b[0] == 10
+            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+            || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 169 && b[1] == 254);
+    }
 
     /// <summary>主用接口：优先首选，其次第一个。</summary>
     public static NetworkInterfaceInfo? Primary() => Enumerate().FirstOrDefault();

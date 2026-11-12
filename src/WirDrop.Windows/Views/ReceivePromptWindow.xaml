@@ -1,0 +1,63 @@
+<Window x:Class="WirDrop.Windows.Views.ReceivePromptWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="接收文件" Height="340" Width="480"
+        WindowStyle="ToolWindow" ResizeMode="NoResize" ShowInTaskbar="False"
+        Topmost="True" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource CardBackground}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="有人想要发送文件给你" FontSize="16" FontWeight="Bold" Margin="0,0,0,6"/>
+        <TextBlock Grid.Row="1" x:Name="FromText" TextWrapping="Wrap" FontSize="13"
+                   Foreground="{StaticResource MutedForeground}" Margin="0,0,0,18"/>
+
+        <Border Grid.Row="2" Background="{StaticResource BadgeBackground}"
+                BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                CornerRadius="8" Padding="8" Margin="0,0,0,18">
+            <ListBox x:Name="FilesList" Background="Transparent" BorderThickness="0">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📄" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding}" FontSize="12" VerticalAlignment="Center"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="DeclineButton" Content="拒绝" Width="90" Margin="0,0,10,0"
+                    Click="DeclineButton_Click" Foreground="{StaticResource Foreground}"
+                    Background="{StaticResource BadgeBackground}" BorderThickness="0" Padding="10,8">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="AcceptButton" Content="接受" Width="90"
+                    Click="AcceptButton_Click" BorderThickness="0" Padding="10,8"
+                    Foreground="White" Background="{StaticResource Accent}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

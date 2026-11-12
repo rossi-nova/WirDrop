@@ -1,0 +1,13 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 浅色主题（深色主题在 Theme.Dark.xaml 中覆盖同名键） -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#F5F6F8"/>
+    <SolidColorBrush x:Key="CardBackground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="CardBorder" Color="#E6E8EC"/>
+    <SolidColorBrush x:Key="BadgeBackground" Color="#F0F2F6"/>
+    <SolidColorBrush x:Key="Accent" Color="#E85A8A"/>
+    <SolidColorBrush x:Key="AccentHover" Color="#F0709A"/>
+    <SolidColorBrush x:Key="Foreground" Color="#1E2028"/>
+    <SolidColorBrush x:Key="MutedForeground" Color="#77808F"/>
+    <SolidColorBrush x:Key="Danger" Color="#D9534F"/>
+</ResourceDictionary>
